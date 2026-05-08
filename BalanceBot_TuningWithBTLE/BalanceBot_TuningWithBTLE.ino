@@ -1,10 +1,6 @@
-#include <Arduino
-BLE.h>
+#include <ArduinoBLE.h>
 #include <LSM6DS3.h>
 #include <Wire.h>
-NEW SKETCH
-
-
 
 
 // Create the IMU object for the Seeed library
@@ -26,7 +22,7 @@ float Kp = 0.0, Kd = 0.0, Ki = 0.0;
 float angle = 0.0, pidError, lastError, integral;
 unsigned long lastTime;
 
-float targetAngle = 2.2; // Your physical balance point
+float targetAngle = 2.6; // Your physical balance point
 
 
 void setup() {
@@ -122,7 +118,7 @@ void loop() {
   integral = constrain(integral + (pidError * dt), -100, 100);
   float derivative = (pidError - lastError) / dt;
   lastError = pidError;
-  float output = (Kp * pidError) + (Ki * integral) + (Kd * derivative);
+  float output = (Kp * pidError) + (Ki * integral) + (-Kd * derivative);  // Try opposite sign for Kd
   
   int motorSpeed = constrain((int)output, -255, 255);
   if (abs(angle) > 45.0) motorSpeed = 0; // Tip-over safety
@@ -144,7 +140,7 @@ void loop() {
     
     char buffer[40];
     // Format: Angle, Kp, Ki, Kd
-    snprintf(buffer, sizeof(buffer), "A:%.0f P:%.1f D:%.1f I:%.1f T:%.1f", angle, Kp, Kd, Ki, targetAngle);
+    snprintf(buffer, sizeof(buffer), "A:%.1f P:%.1f D:%.1f I:%.1f T:%.1f", angle, Kp, Kd, Ki, targetAngle);
     // Print to PC
     Serial.println(buffer);
     
