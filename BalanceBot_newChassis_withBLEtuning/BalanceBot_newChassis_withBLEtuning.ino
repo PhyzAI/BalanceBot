@@ -3,15 +3,37 @@
 #include <Wire.h>
 #include <ArduinoBLE.h> 
 
+
+const bool ENABLE_MEASURE_ANGLE = false; // turn off control and just display angle
+
+
+
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // --- TUNING PARAMETERS ---
-float Kp = 6.0; // 12
-float Kd = 0.0;  // 0.2
-float Ki = 0.0;  // 0.3
-float targetAngle = -3.2;
+float Kp = 6.0; // 
+float Kd = 0.1;  // 0.2
+float Ki = 0.01;  // 0.3
+// 6, 0.1, 0.01 works for the V3 chassi
+
+float targetAngle = -3.7;
 int maxMotorSpeed = 255;  
-int minMotorSpeed = 35;
+int minMotorSpeed = 40; // was 35
+
+
+const bool ENABLE_NONLINEAR = false;
+const float nonlinear_threshold = 4.5;
+const int max_motor_nonlinear = 250;
+
+
+float angle = 0.0;
+float lastError = 0.0;
+float integral = 0.0;
+unsigned long nextLoopTime = 0;
+const unsigned long LOOP_PERIOD = 5000; // was 10000
+
+
+
 
 float alpha = 0.95;        
 float motorA_Scale = 1.0;
@@ -27,15 +49,8 @@ const int mAIN1 = D8, mAIN2 = D9, PWMA = D7;
 const int mBIN1 = A1, mBIN2 = A0, PWMB = D10;
 const int STBY = D6;
 
-float angle = 0.0;
-float lastError = 0.0;
-float integral = 0.0;
-unsigned long nextLoopTime = 0;
-const unsigned long LOOP_PERIOD = 10000;
 
-const bool ENABLE_NONLINEAR = true;
-const float nonlinear_threshold = 10.0;
-const int max_motor_nonlinear = 250;
+
 
 // --- FORWARD DECLARATIONS ---
 void setupBLE();
@@ -77,6 +92,12 @@ void setup() {
 
   myIMU.begin();
   
+
+  if (ENABLE_MEASURE_ANGLE) {
+    Kp = 0; Kd = 0; Ki = 0;
+  }
+
+
   float accX = myIMU.readFloatAccelX();
   float accY = myIMU.readFloatAccelY();
   float accZ = myIMU.readFloatAccelZ();
@@ -162,9 +183,12 @@ void handleBLE() {
     static bool toggleDiagnostic = false;
     char buffer[128];
 
-    //snprintf(buffer, sizeof(buffer), "A%.1f P%.0f D%.1f I%.1f ", targetAngle,Kp, Kd, Ki);
     
-    snprintf(buffer, sizeof(buffer), "A%.1f ", angle); 
+    if (ENABLE_MEASURE_ANGLE)
+      snprintf(buffer, sizeof(buffer), "A%.1f ", angle); 
+    else {
+      snprintf(buffer, sizeof(buffer), "A%.1f P%.0f D%.1f I%.2f ", targetAngle,Kp, Kd, Ki);
+    }
     
     if (central.connected()) txChar.writeValue(buffer);
     toggleDiagnostic = !toggleDiagnostic;
