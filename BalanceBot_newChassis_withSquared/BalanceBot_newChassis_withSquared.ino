@@ -10,15 +10,21 @@ const bool ENABLE_MEASURE_ANGLE = false; // turn off control and just display an
 
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
-// --- TUNING PARAMETERS ---
-float Kp = 6.0; // 
-float Kd = 0.1;  // 0.2
-float Ki = 0.01;  // 0.3
-// 6, 0.1, 0.01 works for the V3 chassi
+// --- ADVANCED TUNING REFINEMENTS ---
+float Kp = 6.0;
+float Ki = 0.3; // Give it a little holding power
+float Kd = 0.2;  // Increased to act as an instant brake on taps
+//float targetAngle = -4.5;
+
+// Quadratic Tuning
+float K_quadratic = 0.8; // was 0.5; Tuning factor for large errors
+float linear_limit = 3.5; // was 3.0; Degrees before quadratic kicks in
+
+
 
 float targetAngle = -3.7;
 int maxMotorSpeed = 255;  
-int minMotorSpeed = 30; // was 35
+int minMotorSpeed = 35; // was 35
 
 
 const bool ENABLE_NONLINEAR = false;
@@ -30,7 +36,7 @@ float angle = 0.0;
 float lastError = 0.0;
 float integral = 0.0;
 unsigned long nextLoopTime = 0;
-const unsigned long LOOP_PERIOD = 5000; // was 10000
+const unsigned long LOOP_PERIOD = 10000; // was 10000
 
 
 float alpha = 0.95;        
@@ -121,21 +127,49 @@ void loop() {
     angle = (alpha * (angle + (gyroY * dt))) + ((1.0 - alpha) * pitch);
 
     float error = targetAngle - angle;
-    
-    integral = constrain(integral + (error * dt), -20, 20);
-    //float derivative = (error - lastError) / dt;
-    float derivative = -gyroY;
 
+
+    // NEW
+
+    // 1. MANAGED INTEGRAL (Prevent Windup Runaways)
+    if (abs(error) < 4.0) {   //was 2
+      // Only wind up when close to balance point
+      integral += error * dt;
+      integral = constrain(integral, -10.0, 10.0);  // was 5
+    } else {
+      // Clear or freeze memory during big tilts so it doesn't push past center
+      integral = 0; 
+    }
+
+    // 2. SMOOTH NON-LINEAR ERROR (Your Squared Speed Concept)
+    float pid_error_term = error;
+    if (abs(error) > linear_limit) {
+      // Add a squared component that matches the sign of the error
+      float extra_error = abs(error) - linear_limit;
+      if (error > 0) {
+        pid_error_term += (extra_error * extra_error * K_quadratic);
+      } else {
+        pid_error_term -= (extra_error * extra_error * K_quadratic);
+      }
+    }
+
+    // 3. SMOOTH DERIVATIVE
+    float derivative = (error - lastError) / dt;
     lastError = error;
 
-    float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+    // 4. CALCULATE OUTPUT
+    float output = (Kp * pid_error_term) + (Ki * integral) + (Kd * derivative);
 
+    // Drive motors directly with the smooth output (No binary max-speed switch)
     if (abs(angle) > 45.0) {
       driveMotors(0);
+      integral = 0;
     } else {
       driveMotors((int)output);
     }
-    
+
+
+
     static int pCount = 0;
     if (pCount++ > 20) {
        Serial.print("Ang:"); Serial.print(angle);
@@ -209,8 +243,8 @@ void handleBLE() {
     if (cmd == 'e') Kd -= 0.1;  if (cmd == 'E') Kd -= 1.0;
     
     // Tune Ki
-    if (cmd == 'i') Ki += 0.01;  if (cmd == 'I') Ki += 0.1;
-    if (cmd == 'j') Ki -= 0.01;  if (cmd == 'J') Ki -= 0.1;
+    if (cmd == 'i') Ki += 0.1;  if (cmd == 'I') Ki += 1.0;
+    if (cmd == 'j') Ki -= 0.1;  if (cmd == 'J') Ki -= 1.0;
 
     // Tune Center of Gravity
     if (cmd == 'a') targetAngle -= 0.1; if (cmd == 'A') targetAngle += 0.1;

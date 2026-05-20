@@ -8,12 +8,15 @@ const bool ENABLE_MEASURE_ANGLE = false; // turn off control and just display an
 
 
 
+// The encoder pins are defined: Encoder 1 is D2 and D3, Encoder 2 is D4 and D5.
+
+
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // --- TUNING PARAMETERS ---
 float Kp = 6.0; // 
 float Kd = 0.1;  // 0.2
-float Ki = 0.01;  // 0.3
+float Ki = 0.0;  // 0.3
 // 6, 0.1, 0.01 works for the V3 chassi
 
 float targetAngle = -3.7;
@@ -21,21 +24,35 @@ int maxMotorSpeed = 255;
 int minMotorSpeed = 30; // was 35
 
 
-const bool ENABLE_NONLINEAR = false;
-const float nonlinear_threshold = 4.5;
-const int max_motor_nonlinear = 250;
-
 
 float angle = 0.0;
 float lastError = 0.0;
 float integral = 0.0;
 unsigned long nextLoopTime = 0;
-const unsigned long LOOP_PERIOD = 5000; // was 10000
-
+const unsigned long LOOP_PERIOD = 10000; // was 10000
 
 float alpha = 0.95;        
 float motorA_Scale = 1.0;
 float motorB_Scale = 0.9;
+
+
+// --- ENCODERS ---
+const int ENC_L_A = D2;
+const int ENC_L_B = D3;
+
+const int ENC_R_A = D4;
+const int ENC_R_B = D5;
+
+volatile long encoderLeft = 0;
+volatile long encoderRight = 0;
+
+// Velocity damping gain
+float Kv = 0.35;
+
+
+
+
+
 
 // BLE Setup
 BLEService uartService("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
@@ -54,39 +71,93 @@ const int STBY = D6;
 void setupBLE();
 void handleBLE();
 
+
+
 void driveMotors(int speed) {
-  if (abs(speed) < 2) { // was 2.  3 works too, but sways more.
-    analogWrite(PWMA, 0); 
+
+  int absSpeed = abs(speed);
+
+  // Small quiet zone
+  if (absSpeed < 8) {
+    analogWrite(PWMA, 0);
     analogWrite(PWMB, 0);
     return;
   }
 
-  int finalOutput;
-  int absSpeed = abs(speed);
-  
-  finalOutput = map(absSpeed, 0, 255, minMotorSpeed, maxMotorSpeed);
-  
-  if ( ENABLE_NONLINEAR && (absSpeed > (Kp * nonlinear_threshold)) ) {
-    finalOutput = max_motor_nonlinear;
-  }
+  // Deadband compensation
+  int finalOutput =
+      minMotorSpeed +
+      ((absSpeed - 8) *
+      (maxMotorSpeed - minMotorSpeed))
+      / (255 - 8);
 
   finalOutput = constrain(finalOutput, 0, 255);
 
-  // Motor A and B logic with scaling for the L/R swap
   analogWrite(PWMA, finalOutput);
   analogWrite(PWMB, (int)(finalOutput * motorB_Scale));
-  
+
+  // Direction
   digitalWrite(mAIN1, speed < 0);
   digitalWrite(mAIN2, speed > 0);
+
   digitalWrite(mBIN1, speed < 0);
   digitalWrite(mBIN2, speed > 0);
 }
+
+
+
+
+void ISR_leftEncoder() {
+  bool A = digitalRead(ENC_L_A);
+  bool B = digitalRead(ENC_L_B);
+
+  if (A == B)
+    encoderLeft++;
+  else
+    encoderLeft--;
+}
+
+void ISR_rightEncoder() {
+  bool A = digitalRead(ENC_R_A);
+  bool B = digitalRead(ENC_R_B);
+
+  if (A == B)
+    encoderRight++;
+  else
+    encoderRight--;
+}
+
+
+
+
 
 void setup() {
   Serial.begin(115200);
   pinMode(STBY, OUTPUT); digitalWrite(STBY, HIGH);
   pinMode(mAIN1, OUTPUT); pinMode(mAIN2, OUTPUT); pinMode(PWMA, OUTPUT);
   pinMode(mBIN1, OUTPUT); pinMode(mBIN2, OUTPUT); pinMode(PWMB, OUTPUT);
+
+
+  // Encoder pins
+  pinMode(ENC_L_A, INPUT_PULLUP);
+  pinMode(ENC_L_B, INPUT_PULLUP);
+
+  pinMode(ENC_R_A, INPUT_PULLUP);
+  pinMode(ENC_R_B, INPUT_PULLUP);
+
+  // Encoder interrupts
+  attachInterrupt(
+    digitalPinToInterrupt(ENC_L_A),
+    ISR_leftEncoder,
+    CHANGE);
+
+  attachInterrupt(
+    digitalPinToInterrupt(ENC_R_A),
+    ISR_rightEncoder,
+    CHANGE);
+
+
+
 
   myIMU.begin();
   
@@ -116,7 +187,14 @@ void loop() {
     float accZ = myIMU.readFloatAccelZ();
     float gyroY = myIMU.readFloatGyroY();
 
-    const float dt = 0.01;
+    //const float dt = 0.01;
+
+    static unsigned long lastMicros = micros();
+    unsigned long now = micros();
+    float dt = (now - lastMicros) / 1000000.0;
+    lastMicros = now;
+
+
     float pitch = atan(-accX / sqrt(accY * accY + accZ * accZ)) * RAD_TO_DEG;
     angle = (alpha * (angle + (gyroY * dt))) + ((1.0 - alpha) * pitch);
 
