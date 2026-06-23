@@ -19,14 +19,20 @@ float Kd = 0.4;  // 0.2
 float Ki = 0.4;  // 0.3
 // Velocity damping gain
 float Kv = 0.0;
-// 6, 0.1, 0.01 works for the V3 chassi
-float K_pos = 0.00; // Returning to homme spot
+// 6, 0.1, 0.01 works for the V3 chassis
+// 20, 0.4, 0.4 works for the V4 chassis
 
+// Encoder based position and velocity, control loop
+float K_pos = 3.0; // Outer Loop: Returning to home spot
+float K_vel = 0.0; // Outer loop: velocity gain
+const float max_encoder_angle = 0.5;  // maximum amount this loop will adjust the angle.  Was 2.0.
+// 5.0, 0.0, 1.0 works for V4 chassis
+    
 
-float targetAngle = -3.5;
+float targetAngle = -3.4;
 int maxMotorSpeed = 255;  
-int minMotorSpeed = 35; // was 35
-const int speed_deadzone = 2; 
+int minMotorSpeed = 20; // was 35.  At 15, the shaking mostly goes away, but the motors become very noisy (high freq noise)
+const int speed_deadzone = 3; 
 
 
 
@@ -187,10 +193,8 @@ void loop() {
     angle = (alpha * (angle + (gyroY * dt))) + ((1.0 - alpha) * pitch);
 
 
-// was minus K_pos
-    float dynamicTarget = targetAngle - (wheelPosition * K_pos); // + (wheelVelocity * K_vel);
+    float dynamicTarget = targetAngle + (wheelPosition * K_pos) + (wheelVelocity * K_vel);
     
-    const float max_encoder_angle = 2.0
     // Don't let the encoder tilt the bot more than 2 degrees off-center
     dynamicTarget = constrain(dynamicTarget, targetAngle - max_encoder_angle, targetAngle + max_encoder_angle);
 
